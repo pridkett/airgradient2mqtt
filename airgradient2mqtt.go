@@ -59,27 +59,28 @@ type tomlConfig struct {
 
 // AirGradient data structure
 type airGradientStatus struct {
-	Wifi            int     `json:"wifi" mqtt:"-" hass:"-"`
-	Serialno        string  `json:"serialno" mqtt:"-" hass:"-"`
-	Rco2            int     `json:"rco2" mqtt:"rco2" hass:"rco2,ppm"`
-	Pm01            int     `json:"pm01" mqtt:"pm01" hass:"pm01,µg/m³"`
-	Pm02            int     `json:"pm02" mqtt:"pm02" hass:"pm02,µg/m³"`
-	Pm10            int     `json:"pm10" mqtt:"pm10" hass:"pm10,µg/m³"`
-	Pm003count      int     `json:"pm003count" mqtt:"pm003count" hass:"pm003count,particles/0.1L"`
-	Atmp            float64 `json:"atmp" mqtt:"atmp" hass:"atmp,°C"`
-	AtmpCompensated float64 `json:"atmpCompensated" mqtt:"atmpCompensated" hass:"atmpCompensated,°C"`
-	Rhum            float64 `json:"rhum" mqtt:"rhum" hass:"rhum,%"`
-	RhumCompensated float64 `json:"rhumCompensated" mqtt:"rhumCompensated" hass:"rhumCompensated,%"`
-	Pm02Compensated int     `json:"pm02Compensated" mqtt:"pm02Compensated" hass:"pm02Compensated,µg/m³"`
-	TvocIndex       int     `json:"tvocIndex" mqtt:"tvocIndex" hass:"tvocIndex,ppb"`
-	TvocRaw         int     `json:"tvocRaw" mqtt:"tvocRaw" hass:"tvocRaw,ppb"`
-	NoxIndex        int     `json:"noxIndex" mqtt:"noxIndex" hass:"noxIndex,ppb"`
-	NoxRaw          int     `json:"noxRaw" mqtt:"noxRaw" hass:"noxRaw"`
-	Boot            int     `json:"boot" mqtt:"-" hass:"-"`
-	BootCount       int     `json:"bootCount" mqtt:"-" hass:"-"`
-	LedMode         string  `json:"ledMode" mqtt:"-" hass:"-"`
-	Firmware        string  `json:"firmware" mqtt:"-" hass:"-"`
-	Model           string  `json:"model" mqtt:"-" hass:"-"`
+	Wifi            int     `json:"wifi" mqtt:"-" hass:"-" influx:"wifi"`
+	Serialno        string  `json:"serialno" mqtt:"-" hass:"-" influx:"mac"`
+	Rco2            int     `json:"rco2" mqtt:"rco2" hass:"rco2,ppm" influx:"rco2"`
+	Pm01            int     `json:"pm01" mqtt:"pm01" hass:"pm01,µg/m³" influx:"pm01"`
+	Pm02            int     `json:"pm02" mqtt:"pm02" hass:"pm02,µg/m³" influx:"pm02"`
+	Pm10            int     `json:"pm10" mqtt:"pm10" hass:"pm10,µg/m³" influx:"pm10"`
+	Pm003count      int     `json:"pm003count" mqtt:"pm003count" hass:"pm003count,particles/0.1L" influx:"pm003_count"`
+	Atmp            float64 `json:"atmp" mqtt:"atmp" hass:"atmp,°C" influx:"atmp"`
+	AtmpCompensated float64 `json:"atmpCompensated" mqtt:"atmpCompensated" hass:"atmpCompensated,°C" influx:"atmp_compensated"`
+	Rhum            float64 `json:"rhum" mqtt:"rhum" hass:"rhum,%" influx:"rhum"`
+	RhumCompensated float64 `json:"rhumCompensated" mqtt:"rhumCompensated" hass:"rhumCompensated,%" influx:"rhum_compensated"`
+	Pm02Compensated int     `json:"pm02Compensated" mqtt:"pm02Compensated" hass:"pm02Compensated,µg/m³" influx:"pm02_compensated"`
+	TvocIndex       int     `json:"tvocIndex" mqtt:"tvocIndex" hass:"tvocIndex,ppb" influx:"tvoc_index"`
+	TvocRaw         int     `json:"tvocRaw" mqtt:"tvocRaw" hass:"tvocRaw,ppb" influx:"tvoc_raw"`
+	NoxIndex        int     `json:"noxIndex" mqtt:"noxIndex" hass:"noxIndex,ppb" influx:"nox_index"`
+	NoxRaw          int     `json:"noxRaw" mqtt:"noxRaw" hass:"noxRaw" influx:"nox_raw"`
+	Boot            int     `json:"boot" mqtt:"-" hass:"-" influx:"boot"`
+	BootCount       int     `json:"bootCount" mqtt:"-" hass:"-" influx:"boot_count"`
+	LedMode         string  `json:"ledMode" mqtt:"-" hass:"-" influx:"led_mode"`
+	Firmware        string  `json:"firmware" mqtt:"-" hass:"-" influx:"firmware"`
+	Model           string  `json:"model" mqtt:"-" hass:"-" influx:"model"`
+	AQI             int     `json:"aqi,omitempty" mqtt:"aqi" hass:"aqi" influx:"aqi"`
 }
 
 // set up a global logger...
@@ -135,6 +136,8 @@ func main() {
 		agstatus := new(airGradientStatus)
 		// see: https://stackoverflow.com/a/31129967/57626
 		getJson(config.AirGradient.Url, agstatus, myClient)
+		// calculate PM2.5 AQI and add it into the struct
+		agstatus.AQI = PM25toAQI(agstatus.Pm02Compensated)
 
 		if agstatus.Serialno != "" {
 			if config.Influx != (tomlConfigInflux{}) {
