@@ -15,6 +15,7 @@ import (
 	"github.com/withmandala/go-log"
 
 	_ "github.com/influxdata/influxdb1-client" // this is important because of the bug in go mod
+	influxclient "github.com/influxdata/influxdb1-client/v2"
 )
 
 // MQTT settings for overall configuration
@@ -38,11 +39,12 @@ type tomlConfigHass struct {
 }
 
 type tomlConfigInflux struct {
-	Hostname string
-	Port     int
-	Database string
-	Username string
-	Password string
+	Hostname    string
+	Port        int
+	Database    string
+	Username    string
+	Password    string
+	Measurement string
 }
 
 type tomlConfigAirGradient struct {
@@ -60,7 +62,7 @@ type tomlConfig struct {
 // AirGradient data structure
 type airGradientStatus struct {
 	Wifi            int     `json:"wifi" mqtt:"-" hass:"-" influx:"wifi"`
-	Serialno        string  `json:"serialno" mqtt:"-" hass:"-" influx:"mac"`
+	Serialno        string  `json:"serialno" mqtt:"-" hass:"-" influx:"-"`
 	Rco2            int     `json:"rco2" mqtt:"rco2" hass:"rco2,ppm" influx:"rco2"`
 	Pm01            int     `json:"pm01" mqtt:"pm01" hass:"pm01,µg/m³" influx:"pm01"`
 	Pm02            int     `json:"pm02" mqtt:"pm02" hass:"pm02,µg/m³" influx:"pm02"`
@@ -79,7 +81,7 @@ type airGradientStatus struct {
 	BootCount       int     `json:"bootCount" mqtt:"-" hass:"-" influx:"boot_count"`
 	LedMode         string  `json:"ledMode" mqtt:"-" hass:"-" influx:"led_mode"`
 	Firmware        string  `json:"firmware" mqtt:"-" hass:"-" influx:"firmware"`
-	Model           string  `json:"model" mqtt:"-" hass:"-" influx:"model"`
+	Model           string  `json:"model" mqtt:"-" hass:"-" influx:"-"`
 	AQI             int     `json:"aqi,omitempty" mqtt:"aqi" hass:"aqi" influx:"aqi"`
 }
 
@@ -88,6 +90,9 @@ type airGradientStatus struct {
 var logger *log.Logger
 
 var config tomlConfig
+
+var MQTT_TAG_LABELS = []string{"name"}
+var INFLUX_TAG_LABELS = []string{"name"}
 
 // var components tomlComponents
 var client mqtt.Client
@@ -102,7 +107,7 @@ var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err
 }
 
 func main() {
-	logger = log.New(os.Stderr).WithColor().WithDebug()
+	logger = log.New(os.Stderr).WithColor()
 
 	configFile := flag.String("config", "", "Filename with configuration")
 	flag.Parse()
@@ -141,7 +146,11 @@ func main() {
 
 		if agstatus.Serialno != "" {
 			if config.Influx != (tomlConfigInflux{}) {
-				// publishInflux(agstatus)
+				tags := map[string]string{
+					"mac":   agstatus.Serialno,
+					"model": agstatus.Model,
+				}
+				publishInflux(agstatus, config.Influx.Measurement, tags)
 			}
 
 			if config.Mqtt != (tomlConfigMQTT{}) {
@@ -193,7 +202,94 @@ func getJson(url string, target interface{}, myClient *http.Client) error {
 	return json.NewDecoder(r.Body).Decode(target)
 }
 
-func publishInflux(status *airGradientStatus) {
+func getFieldTags(field reflect.StructField, lookupKey string, defaultLabels []string) map[string]string {
+	tags := make(map[string]string)
+	labellessTagsValid := true
+
+	if tag, ok := field.Tag.Lookup(lookupKey); ok {
+		tagParts := strings.Split(tag, ",")
+		for i, tag := range tagParts {
+			splitTag := strings.Split(tag, ":")
+			if len(splitTag) == 1 {
+				if labellessTagsValid {
+					if i < len(defaultLabels) {
+						tags[defaultLabels[i]] = splitTag[0]
+					} else {
+						logger.Errorf("Invalid tag - too many labelless tags: %s", tag)
+					}
+				} else {
+					logger.Errorf("Invalid tag - labelless tags not allowed after labeled tag: %s", tag)
+				}
+			} else if len(splitTag) == 2 {
+				labellessTagsValid = false
+				tags[splitTag[0]] = splitTag[1]
+			} else {
+				logger.Errorf("Invalid tag - too man parts: %s", tag)
+			}
+		}
+	}
+	return tags
+}
+
+func publishInflux(status interface{}, measurement string, tags map[string]string) {
+	logger.Infof("Type of status: %v", reflect.TypeOf(status))
+
+	v := reflect.ValueOf(status).Elem()
+	typeOfStatus := v.Type()
+
+	httpConfig := influxclient.HTTPConfig{
+		Addr: fmt.Sprintf("http://%s:%d", config.Influx.Hostname, config.Influx.Port),
+	}
+	if config.Influx.Username != "" && config.Influx.Password != "" {
+		httpConfig.Username = config.Influx.Username
+		httpConfig.Password = config.Influx.Password
+	}
+
+	c, err := influxclient.NewHTTPClient(httpConfig)
+	if err != nil {
+		logger.Errorf("Error creating InfluxDB Client: ", err.Error())
+	}
+	defer c.Close()
+
+	bp, err := influxclient.NewBatchPoints(influxclient.BatchPointsConfig{
+		Database:  config.Influx.Database,
+		Precision: "s",
+	})
+	if err != nil {
+		logger.Errorf("error creating batchpoints: %s", err)
+	}
+
+	values := map[string]interface{}{}
+
+	for i := 0; i < v.NumField(); i++ {
+		field := typeOfStatus.Field(i)
+		fieldName := field.Name
+		influxFieldName := fieldName
+
+		influxTags := getFieldTags(field, "influx", INFLUX_TAG_LABELS)
+
+		if _, ok := influxTags["name"]; ok {
+			influxFieldName = influxTags["name"]
+			if influxFieldName == "-" {
+				continue
+			}
+		}
+
+		values[influxFieldName] = v.Field(i).Interface()
+	}
+
+	point, err := influxclient.NewPoint(measurement, tags, values, time.Now())
+	if err != nil {
+		logger.Errorf("error creating new point: %s", err)
+	}
+	bp.AddPoint(point)
+	err = c.Write(bp)
+
+	if err != nil {
+		logger.Fatal(err)
+	}
+	logger.Infof("Record published to InfluxDB")
+
 }
 
 func publishMQTT(status interface{}) {
@@ -207,14 +303,12 @@ func publishMQTT(status interface{}) {
 		fieldName := field.Name
 		mqttFieldName := fieldName
 
-		if mqttTag, ok := field.Tag.Lookup("mqtt"); ok {
-			tagParts := strings.Split(mqttTag, ",")
-			if tagParts[0] == "-" {
+		mqttTags := getFieldTags(field, "mqtt", MQTT_TAG_LABELS)
+		if _, ok := mqttTags["name"]; ok {
+			mqttFieldName = mqttTags["name"]
+			if mqttFieldName == "-" {
 				logger.Debugf("Ignoring sending field %s to MQTT", fieldName)
 				continue
-			}
-			if tagParts[0] != "" {
-				mqttFieldName = tagParts[0]
 			}
 		}
 

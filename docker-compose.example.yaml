@@ -1,0 +1,10 @@
+version: "3"
+
+services:
+  airgradient2mqtt:
+    container_name: airgradient2mqtt
+    hostname: airgradient2mqtt
+    image: pridkett/airgradient2mqtt
+    volumes:
+      - './config.toml:/config.toml'
+    restart: unless-stopped

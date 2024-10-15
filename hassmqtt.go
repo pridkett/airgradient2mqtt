@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"strings"
 )
 
 // Types for Home Assistant MQTT Discovery
@@ -30,6 +29,8 @@ type hassMqttConfig struct {
 	Platform          string               `json:"-"`
 }
 
+var HASS_TAG_LABELS = []string{"name", "unit", "class", "icon"}
+
 func publishHass(status interface{}, identifier string, swversion string) {
 	v := reflect.ValueOf(status).Elem()
 	typeOfStatus := v.Type()
@@ -39,35 +40,13 @@ func publishHass(status interface{}, identifier string, swversion string) {
 		fieldName := field.Name
 		mqttFieldName := fieldName
 
-		unitOfMeasurement := ""
-		deviceClass := ""
-
-		if hassTag, ok := field.Tag.Lookup("hass"); ok {
-			tagParts := strings.Split(hassTag, ",")
-			if tagParts[0] == "-" {
+		hassTags := getFieldTags(field, "hass", HASS_TAG_LABELS)
+		if _, ok := hassTags["name"]; ok {
+			mqttFieldName = hassTags["name"]
+			if mqttFieldName == "-" {
 				logger.Debugf("Ignoring sending field %s to HomeAssistant", fieldName)
 				continue
 			}
-
-			if len(tagParts) > 0 {
-				mqttFieldName = tagParts[0]
-			}
-
-			if len(tagParts) > 1 && tagParts[1] != "-" {
-				unitOfMeasurement = tagParts[1]
-			}
-
-			if len(tagParts) > 2 && tagParts[2] != "-" {
-				deviceClass = tagParts[2]
-			}
-		}
-
-		if hassTag, ok := field.Tag.Lookup("hass"); ok && hassTag == "ignore" {
-			logger.Debugf("Ignoring sending field %s to HomeAssistant", fieldName)
-			continue
-		}
-		if hassFieldName, ok := field.Tag.Lookup("hass-name"); ok {
-			mqttFieldName = hassFieldName
 		}
 
 		// generage the topic name
@@ -101,12 +80,25 @@ func publishHass(status interface{}, identifier string, swversion string) {
 			hassConfig.Device.SWVersion = swversion
 		}
 
-		if deviceClass != "" {
-			hassConfig.DeviceClass = deviceClass
+		if _, ok := hassTags["class"]; ok {
+			deviceClass := hassTags["class"]
+			if deviceClass != "-" {
+				hassConfig.DeviceClass = deviceClass
+			}
 		}
 
-		if unitOfMeasurement != "" {
-			hassConfig.UnitOfMeasurement = unitOfMeasurement
+		if _, ok := hassTags["unit"]; ok {
+			unitOfMeasurement := hassTags["unit"]
+			if unitOfMeasurement != "-" {
+				hassConfig.UnitOfMeasurement = unitOfMeasurement
+			}
+		}
+
+		if _, ok := hassTags["icon"]; ok {
+			icon := hassTags["icon"]
+			if icon != "-" {
+				hassConfig.Icon = icon
+			}
 		}
 
 		configPayload, err := json.Marshal(hassConfig)
