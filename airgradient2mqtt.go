@@ -70,8 +70,8 @@ type airGradientStatus struct {
 	Pm003count      int     `json:"pm003count" mqtt:"pm003count" hass:"pm003count,particles/0.1L" influx:"pm003_count"`
 	Atmp            float64 `json:"atmp" mqtt:"atmp" hass:"atmp,°C" influx:"atmp"`
 	AtmpCompensated float64 `json:"atmpCompensated" mqtt:"atmpCompensated" hass:"atmpCompensated,°C" influx:"atmp_compensated"`
-	Rhum            float64 `json:"rhum" mqtt:"rhum" hass:"rhum,%" influx:"rhum"`
-	RhumCompensated float64 `json:"rhumCompensated" mqtt:"rhumCompensated" hass:"rhumCompensated,%" influx:"rhum_compensated"`
+	Rhum            int     `json:"rhum" mqtt:"rhum" hass:"rhum,%" influx:"rhum"`
+	RhumCompensated int     `json:"rhumCompensated" mqtt:"rhumCompensated" hass:"rhumCompensated,%" influx:"rhum_compensated"`
 	Pm02Compensated int     `json:"pm02Compensated" mqtt:"pm02Compensated" hass:"pm02Compensated,µg/m³" influx:"pm02_compensated"`
 	TvocIndex       int     `json:"tvocIndex" mqtt:"tvocIndex" hass:"tvocIndex,ppb" influx:"tvoc_index"`
 	TvocRaw         int     `json:"tvocRaw" mqtt:"tvocRaw" hass:"tvocRaw,ppb" influx:"tvoc_raw"`
@@ -80,7 +80,7 @@ type airGradientStatus struct {
 	Boot            int     `json:"boot" mqtt:"-" hass:"-" influx:"boot"`
 	BootCount       int     `json:"bootCount" mqtt:"-" hass:"-" influx:"boot_count"`
 	LedMode         string  `json:"ledMode" mqtt:"-" hass:"-" influx:"led_mode"`
-	Firmware        string  `json:"firmware" mqtt:"-" hass:"-" influx:"firmware"`
+	Firmware        string  `json:"firmware" mqtt:"-" hass:"-" influx:"-"`
 	Model           string  `json:"model" mqtt:"-" hass:"-" influx:"-"`
 	AQI             int     `json:"aqi,omitempty" mqtt:"aqi" hass:"aqi" influx:"aqi"`
 }
@@ -147,8 +147,9 @@ func main() {
 		if agstatus.Serialno != "" {
 			if config.Influx != (tomlConfigInflux{}) {
 				tags := map[string]string{
-					"mac":   agstatus.Serialno,
-					"model": agstatus.Model,
+					"mac":      agstatus.Serialno,
+					"model":    agstatus.Model,
+					"firmware": agstatus.Firmware,
 				}
 				publishInflux(agstatus, config.Influx.Measurement, tags)
 			}
