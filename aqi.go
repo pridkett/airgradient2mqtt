@@ -33,7 +33,8 @@ func calculateAQI(concentration float64, breakpoints []AQIBreakpoint) int {
 }
 
 // PM25toAQI takes a PM2.5 concentration and returns the AQI value
-func PM25toAQI(pm25Concentration int) int {
-	// Convert the integer concentration to a float for the calculation
-	return calculateAQI(float64(pm25Concentration), pm25Breakpoints)
+func PM25toAQI(pm25Concentration float64) int {
+	// The EPA truncates PM2.5 to 0.1 µg/m³ first; the breakpoints have 0.1
+	// gaps (12.0, 12.1) that a value like 12.05 would otherwise fall into.
+	return calculateAQI(math.Floor(pm25Concentration*10)/10, pm25Breakpoints)
 }

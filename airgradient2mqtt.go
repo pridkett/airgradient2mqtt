@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"reflect"
@@ -57,32 +60,34 @@ type tomlConfig struct {
 	Mqtt        tomlConfigMQTT
 	Hass        tomlConfigHass
 	Influx      tomlConfigInflux
+	Timescale   tomlConfigTimescale
 }
 
-// AirGradient data structure
+// AirGradient data structure. Firmware 3.x reports most readings as
+// decimals; decoding them into ints failed and left them 0.
 type airGradientStatus struct {
-	Wifi            int     `json:"wifi" mqtt:"-" hass:"-" influx:"wifi"`
-	Serialno        string  `json:"serialno" mqtt:"-" hass:"-" influx:"-"`
-	Rco2            int     `json:"rco2" mqtt:"rco2" hass:"rco2,ppm" influx:"rco2"`
-	Pm01            int     `json:"pm01" mqtt:"pm01" hass:"pm01,µg/m³" influx:"pm01"`
-	Pm02            int     `json:"pm02" mqtt:"pm02" hass:"pm02,µg/m³" influx:"pm02"`
-	Pm10            int     `json:"pm10" mqtt:"pm10" hass:"pm10,µg/m³" influx:"pm10"`
-	Pm003count      int     `json:"pm003count" mqtt:"pm003count" hass:"pm003count,particles/0.1L" influx:"pm003_count"`
-	Atmp            float64 `json:"atmp" mqtt:"atmp" hass:"atmp,°C" influx:"atmp"`
-	AtmpCompensated float64 `json:"atmpCompensated" mqtt:"atmpCompensated" hass:"atmpCompensated,°C" influx:"atmp_compensated"`
-	Rhum            int     `json:"rhum" mqtt:"rhum" hass:"rhum,%" influx:"rhum"`
-	RhumCompensated int     `json:"rhumCompensated" mqtt:"rhumCompensated" hass:"rhumCompensated,%" influx:"rhum_compensated"`
-	Pm02Compensated int     `json:"pm02Compensated" mqtt:"pm02Compensated" hass:"pm02Compensated,µg/m³" influx:"pm02_compensated"`
-	TvocIndex       int     `json:"tvocIndex" mqtt:"tvocIndex" hass:"tvocIndex,ppb" influx:"tvoc_index"`
-	TvocRaw         int     `json:"tvocRaw" mqtt:"tvocRaw" hass:"tvocRaw,ppb" influx:"tvoc_raw"`
-	NoxIndex        int     `json:"noxIndex" mqtt:"noxIndex" hass:"noxIndex,ppb" influx:"nox_index"`
-	NoxRaw          int     `json:"noxRaw" mqtt:"noxRaw" hass:"noxRaw" influx:"nox_raw"`
-	Boot            int     `json:"boot" mqtt:"-" hass:"-" influx:"boot"`
-	BootCount       int     `json:"bootCount" mqtt:"-" hass:"-" influx:"boot_count"`
-	LedMode         string  `json:"ledMode" mqtt:"-" hass:"-" influx:"led_mode"`
-	Firmware        string  `json:"firmware" mqtt:"-" hass:"-" influx:"-"`
-	Model           string  `json:"model" mqtt:"-" hass:"-" influx:"-"`
-	AQI             int     `json:"aqi,omitempty" mqtt:"aqi" hass:"aqi" influx:"aqi"`
+	Wifi            int     `json:"wifi" mqtt:"-" hass:"-" influx:"wifi" pg:"wifi"`
+	Serialno        string  `json:"serialno" mqtt:"-" hass:"-" influx:"-" pg:"mac"`
+	Rco2            float64 `json:"rco2" mqtt:"rco2" hass:"rco2,ppm" influx:"rco2,type:int" pg:"rco2"`
+	Pm01            float64 `json:"pm01" mqtt:"pm01" hass:"pm01,µg/m³" influx:"pm01,type:int" pg:"pm01"`
+	Pm02            float64 `json:"pm02" mqtt:"pm02" hass:"pm02,µg/m³" influx:"pm02,type:int" pg:"pm02"`
+	Pm10            float64 `json:"pm10" mqtt:"pm10" hass:"pm10,µg/m³" influx:"pm10,type:int" pg:"pm10"`
+	Pm003count      float64 `json:"pm003count" mqtt:"pm003count" hass:"pm003count,particles/0.1L" influx:"pm003_count,type:int" pg:"pm003_count"`
+	Atmp            float64 `json:"atmp" mqtt:"atmp" hass:"atmp,°C" influx:"atmp" pg:"atmp"`
+	AtmpCompensated float64 `json:"atmpCompensated" mqtt:"atmpCompensated" hass:"atmpCompensated,°C" influx:"atmp_compensated" pg:"atmp_compensated"`
+	Rhum            float64 `json:"rhum" mqtt:"rhum" hass:"rhum,%" influx:"rhum,type:int" pg:"rhum"`
+	RhumCompensated float64 `json:"rhumCompensated" mqtt:"rhumCompensated" hass:"rhumCompensated,%" influx:"rhum_compensated,type:int" pg:"rhum_compensated"`
+	Pm02Compensated float64 `json:"pm02Compensated" mqtt:"pm02Compensated" hass:"pm02Compensated,µg/m³" influx:"pm02_compensated,type:int" pg:"pm02_compensated"`
+	TvocIndex       float64 `json:"tvocIndex" mqtt:"tvocIndex" hass:"tvocIndex,ppb" influx:"tvoc_index,type:int" pg:"tvoc_index"`
+	TvocRaw         float64 `json:"tvocRaw" mqtt:"tvocRaw" hass:"tvocRaw,ppb" influx:"tvoc_raw,type:int" pg:"tvoc_raw"`
+	NoxIndex        float64 `json:"noxIndex" mqtt:"noxIndex" hass:"noxIndex,ppb" influx:"nox_index,type:int" pg:"nox_index"`
+	NoxRaw          float64 `json:"noxRaw" mqtt:"noxRaw" hass:"noxRaw" influx:"nox_raw,type:int" pg:"nox_raw"`
+	Boot            int     `json:"boot" mqtt:"-" hass:"-" influx:"boot" pg:"-"`
+	BootCount       int     `json:"bootCount" mqtt:"-" hass:"-" influx:"boot_count" pg:"boot_count"`
+	LedMode         string  `json:"ledMode" mqtt:"-" hass:"-" influx:"led_mode" pg:"led_mode"`
+	Firmware        string  `json:"firmware" mqtt:"-" hass:"-" influx:"-" pg:"firmware"`
+	Model           string  `json:"model" mqtt:"-" hass:"-" influx:"-" pg:"model"`
+	AQI             int     `json:"aqi,omitempty" mqtt:"aqi" hass:"aqi" influx:"aqi" pg:"aqi"`
 }
 
 // set up a global logger...
@@ -134,17 +139,44 @@ func main() {
 		}
 	}
 
+	var pg *pgWriter
+	if config.Timescale != (tomlConfigTimescale{}) {
+		var err error
+		if pg, err = newPGWriter(context.Background(), config.Timescale); err != nil {
+			logger.Fatal(err)
+		}
+		logger.Infof("Writing to TimescaleDB table %s", config.Timescale.Table)
+	}
+
 	logger.Infof("HTTP Target: %s", config.AirGradient.Url)
 	var myClient = &http.Client{Timeout: 10 * time.Second}
 
 	for {
 		agstatus := new(airGradientStatus)
 		// see: https://stackoverflow.com/a/31129967/57626
-		getJson(config.AirGradient.Url, agstatus, myClient)
+		if err := getJson(config.AirGradient.Url, agstatus, myClient); err != nil {
+			logger.Warnf("Reading the AirGradient failed, skipping this poll: %v", err)
+			time.Sleep(time.Duration(config.AirGradient.PollRate) * time.Second)
+			continue
+		}
 		// calculate PM2.5 AQI and add it into the struct
 		agstatus.AQI = PM25toAQI(agstatus.Pm02Compensated)
 
 		if agstatus.Serialno != "" {
+			if pg != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				n, err := pg.write(ctx, time.Now(), agstatus)
+				cancel()
+				switch {
+				case errors.Is(err, errSchema):
+					logger.Fatal(err)
+				case err != nil:
+					logger.Errorf("TimescaleDB write failed, %d readings queued: %v", len(pg.queue), err)
+				default:
+					logger.Infof("Wrote %d rows to TimescaleDB", n)
+				}
+			}
+
 			if config.Influx != (tomlConfigInflux{}) {
 				tags := map[string]string{
 					"mac":      agstatus.Serialno,
@@ -248,7 +280,7 @@ func publishInflux(status interface{}, measurement string, tags map[string]strin
 
 	c, err := influxclient.NewHTTPClient(httpConfig)
 	if err != nil {
-		logger.Errorf("Error creating InfluxDB Client: ", err.Error())
+		logger.Errorf("Error creating InfluxDB Client: %v", err)
 	}
 	defer c.Close()
 
@@ -276,7 +308,13 @@ func publishInflux(status interface{}, measurement string, tags map[string]strin
 			}
 		}
 
-		values[influxFieldName] = v.Field(i).Interface()
+		value := v.Field(i).Interface()
+		// Keep the field types the InfluxDB measurement already has; a type
+		// change would make every write fail with a field type conflict.
+		if f, ok := value.(float64); ok && influxTags["type"] == "int" {
+			value = int64(math.Round(f))
+		}
+		values[influxFieldName] = value
 	}
 
 	point, err := influxclient.NewPoint(measurement, tags, values, time.Now())
@@ -284,10 +322,9 @@ func publishInflux(status interface{}, measurement string, tags map[string]strin
 		logger.Errorf("error creating new point: %s", err)
 	}
 	bp.AddPoint(point)
-	err = c.Write(bp)
-
-	if err != nil {
-		logger.Fatal(err)
+	if err := c.Write(bp); err != nil {
+		logger.Errorf("InfluxDB write failed: %v", err)
+		return
 	}
 	logger.Infof("Record published to InfluxDB")
 
