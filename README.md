@@ -8,6 +8,57 @@ October 2024
 Overview
 --------
 
+Polls an AirGradient monitor's local API (`/measures/current`) and publishes each reading to any of:
+
+- **MQTT**, one topic per reading, with optional Home Assistant discovery (`[mqtt]`, `[hass]`)
+- **TimescaleDB/PostgreSQL**, one row per reading in a wide table (`[timescale]`)
+- **InfluxDB 1.x** (`[influx]`)
+
+Each output is enabled by including its section in the config file.
+
+```toml
+[airgradient]
+    url = "http://airgradient.local/measures/current"
+    poll_rate = 120
+
+[mqtt]
+    broker_host = "mqtt.local"
+    broker_port = 1883
+    client_id = "airgradient2mqtt"
+    topic_prefix = "airquality"
+
+[timescale]
+    table = "airgradient"
+    # max_queue = 1000   # readings held while the database is unreachable
+```
+
+Run it with `airgradient2mqtt -config config.toml`, or with Docker using the multi-arch images
+(amd64, arm64, arm/v7) published to `ghcr.io/pridkett/airgradient2mqtt`.
+
+TimescaleDB Setup
+-----------------
+
+The connection comes from the standard libpq environment variables (`PGHOST`, `PGPORT`, `PGUSER`,
+`PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`), so the config file holds no credentials. The program only
+inserts rows; it checks at startup that the table has every column and exits if not. Readings that
+can't be written are queued in memory (`max_queue`, default 1000, over a day at a 120 s poll) and
+written with the next successful insert.
+
+```sql
+CREATE TABLE airgradient (
+  time timestamptz NOT NULL, mac text NOT NULL, model text, firmware text, wifi integer,
+  rco2 double precision, pm01 double precision, pm02 double precision, pm02_compensated double precision,
+  pm10 double precision, pm003_count double precision, atmp double precision, atmp_compensated double precision,
+  rhum double precision, rhum_compensated double precision, tvoc_index double precision, tvoc_raw double precision,
+  nox_index double precision, nox_raw double precision, aqi integer, boot_count integer, led_mode text
+);
+SELECT create_hypertable('airgradient', by_range('time', INTERVAL '30 days'));
+```
+
+Firmware 3.x reports most readings as decimals. Before this was handled, they were decoded as integers and
+came out as 0 whenever the value wasn't a whole number, in MQTT and InfluxDB alike. InfluxDB still receives
+integers (rounded), since changing a field's type there would make every write fail.
+
 InfluxDB Setup
 --------------
 

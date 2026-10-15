@@ -1,18 +1,14 @@
-FROM golang:1.23-alpine
-
+# Cross-compiles on the build host for each target platform, so multi-arch
+# builds (amd64, arm64, arm/v7) don't run the Go toolchain under emulation.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+ARG TARGETOS TARGETARCH TARGETVARIANT
 WORKDIR /app
-COPY go.mod ./
-COPY go.sum ./
-
+COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-
-# You need CGO_ENABLED=0 to make it so the binary isn't dynamically linked
-# for more information: https://stackoverflow.com/a/55106860/57626
-RUN CGO_ENABLED=0 GOOS=linux go build -o /airgradient2mqtt
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} \
+    go build -trimpath -ldflags="-s -w" -o /airgradient2mqtt
 
 FROM scratch
-
-COPY --from=0 /airgradient2mqtt /airgradient2mqtt
-
+COPY --from=build /airgradient2mqtt /airgradient2mqtt
 CMD ["/airgradient2mqtt", "-config", "/config.toml"]
